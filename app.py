@@ -17,7 +17,7 @@ with st.sidebar:
     
     # ENLACES A CLASSROOM (¡Edita esto con tu link real!)
     st.header("🔗 Enlaces Rápidos")
-    st.link_button("Ir a Google Classroom", "https://classroom.google.com/PEGAR_TU_ENLACE_AQUI")
+   st.link_button("Ir a Google Classroom", "https://classroom.google.com/w/ODM5MzY1NTk0Mzc5/t/all")
     
     st.markdown("---")
     st.header("📂 Recursos")
