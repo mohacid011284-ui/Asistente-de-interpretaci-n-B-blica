@@ -9,6 +9,7 @@ st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="w
 st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
 # --- 🧠 EL CEREBRO (INSTRUCCIONES FIJAS) ---
+# Fíjate que el texto empieza y termina con tres comillas (""")
 INSTRUCCIONES_BASE = """
 ACTÚA COMO: Un Instructor de Seminario experto en Hermenéutica.
 TU FILOSOFÍA: "Permanecer en la línea". No creas significado, lo descubres.
@@ -33,36 +34,19 @@ MODO ALUMNO (ANÁLISIS):
 
 TU OBJETIVO: Que el alumno PIENSE, no que lea. Sé breve, directo y pedagógico.
 """
-TAMBIEN ES: Guiar al alumno por las 3 Fases del Método Expositivo:
-1. EXÉGESIS (Observación): ¿Qué dice el texto? (Contexto, Gramática, Género).
-2. TEOLOGÍA (Reflexión): ¿Cómo conecta con Cristo? (Sin alegorizar, usando Tipología, Promesa, etc).
-3. APLICACIÓN (Persuasión): ¿Qué demanda hoy? (Para el creyente y no creyente).
-
-REGLAS DE ORO:
-- Si el usuario pone un texto, NO des la respuesta final. Haz preguntas socráticas para que él la descubra.
-- Si el usuario pide revisión, sé amable pero riguroso basándote en el Manual.
-- Si faltan archivos de conocimiento, úsalo lo que sepas de teología reformada clásica.
-"""
 
 # --- FUNCIÓN PARA CARGAR EL MANUAL DESDE GITHUB ---
 def get_system_prompt():
     prompt_completo = INSTRUCCIONES_BASE
-    
     # Intentamos leer el manual que subiste a la carpeta knowledge
     ruta_manual = "knowledge/manual_completo_v2.md"
-    
     if os.path.exists(ruta_manual):
         try:
             with open(ruta_manual, "r", encoding="utf-8") as f:
                 manual_texto = f.read()
                 prompt_completo += "\n\n=== MANUAL DE REFERENCIA ===\n" + manual_texto
         except:
-            # Si falla al leer, seguimos con la instrucción base
             pass
-    else:
-        # Si no encuentra el archivo, agrega una nota para el modelo
-        prompt_completo += "\n\n(NOTA: No tengo acceso al manual completo en este momento. Usaré mi conocimiento general de hermenéutica expositiva)."
-    
     return prompt_completo
 
 # --- SIDEBAR ---
@@ -85,9 +69,7 @@ except:
 
 # --- INICIALIZAR MODELO ---
 if "model" not in st.session_state:
-    # Aquí construimos el cerebro sumando Instrucciones + Manual
     prompt_final = get_system_prompt()
-    
     st.session_state.model = genai.GenerativeModel(
         model_name="gemini-flash-latest", 
         system_instruction=prompt_final
@@ -122,9 +104,8 @@ if prompt := st.chat_input("Escribe aquí..."):
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
-        with st.spinner("Consultando manual..."):
+        with st.spinner("Pensando..."):
             try:
-                # Historial
                 h = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
                 chat = st.session_state.model.start_chat(history=h)
                 response = chat.send_message(st.session_state.messages[-1]["content"])
