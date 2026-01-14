@@ -3,8 +3,9 @@ from google import genai
 from google.genai import types
 import os
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="wide")
+st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
 # --- API KEY & CLIENTE (SDK NUEVO) ---
 try:
@@ -14,30 +15,33 @@ except:
     st.stop()
 
 if "client" not in st.session_state:
-    # Esta es la conexión moderna
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO ---
+# --- CEREBRO (INSTRUCCIONES + KNOWLEDGE) ---
 INSTRUCCIONES = """
-ACTÚA COMO: Instructor de Seminario (Hermenéutica).
-MODO AULA: Sé socrático, breve.
-MODO REVISIÓN: Sé crítico, usa la Hoja de Evaluación, señala errores.
+ACTÚA COMO: Instructor de Seminario experto en Hermenéutica Expositiva.
+TU FILOSOFÍA: "Permanecer en la línea".
+
+MODO 1: MAESTRO SOCRÁTICO (Aula/Alumno) -> Sé breve, pregunta y espera.
+MODO 2: AUDITOR ESTRICTO (Revisión) -> Sé crítico, usa la Hoja de Evaluación, señala errores y reglas rotas.
+CIERRE OBLIGATORIO EN REVISIÓN: "¿Te gustaría que genere una re-modificación...?"
 """
 
 def get_prompt():
     texto = INSTRUCCIONES
+    # Intenta leer archivos de la carpeta knowledge
     if os.path.exists("knowledge"):
         for f in os.listdir("knowledge"):
-            if f.endswith(".md"):
+            if f.endswith((".md", ".txt")):
                 try: 
                     with open(f"knowledge/{f}", "r", encoding="utf-8") as file:
-                        texto += f"\n--- {f} ---\n{file.read()}"
+                        texto += f"\n--- {f.upper()} ---\n{file.read()}"
                 except: pass
     return texto
 
-# --- CHAT ---
+# --- CONFIGURACIÓN DEL CHAT ---
 if "chat" not in st.session_state or st.session_state.chat is None:
-    # Usamos el modelo ESTABLE (1.5 Flash)
+    # Usamos el modelo ESTABLE (1.5 Flash) que ya tienes configurado
     st.session_state.chat = st.session_state.client.chats.create(
         model="gemini-1.5-flash", 
         config=types.GenerateContentConfig(
@@ -49,46 +53,69 @@ if "chat" not in st.session_state or st.session_state.chat is None:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# --- INTERFAZ ---
-st.title("📖 Instructor Bíblico (Versión Pro)")
+# --- INTERFAZ VISUAL ---
+st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
-    st.header("Herramientas")
-    archivo = st.file_uploader("Subir Sermón/Hoja", type=["pdf", "txt", "md"])
-    if st.button("🗑️ Reiniciar", type="primary"):
+    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
+    st.title("Panel de Control")
+    archivo = st.file_uploader("📂 Subir Sermón/Hoja", type=["pdf", "txt", "md"])
+    if archivo:
+        st.success("✅ Archivo listo para revisión")
+        
+    st.markdown("---")
+    if st.button("🗑️ Reiniciar Chat", type="primary"):
         st.session_state.chat = None
         st.session_state.messages = []
         st.rerun()
 
-# Botones
-cols = st.columns(4)
-def enviar(txt): st.session_state.messages.append({"role": "user", "content": txt})
-with cols[0]: 
-    if st.button("🎓 Aula"): enviar("Modo Aula: Lección 1")
-with cols[3]: 
-    if st.button("🔍 Revisión"): enviar("ACTIVA MODO AUDITOR. Revisa mi archivo.")
+# --- BOTONES DE ACCIÓN (AQUÍ ESTÁN LOS 4) ---
+c1, c2, c3, c4 = st.columns(4)
 
-# Chat Loop
+# Función auxiliar para enviar mensajes al chat
+def enviar(txt): 
+    st.session_state.messages.append({"role": "user", "content": txt})
+
+with c1: 
+    if st.button("🎓 Aula"): 
+        enviar("Iniciar Modo Aula: Lección 1")
+with c2: 
+    if st.button("📝 Alumno"): 
+        enviar("Quiero analizar un pasaje (Modo Socrático)")
+with c3: 
+    if st.button("🧑‍🏫 Maestro"): 
+        enviar("Modela una interpretación experta")
+with c4: 
+    if st.button("🔍 Revisión"): 
+        enviar("He subido mi documento. ACTIVA MODO AUDITOR ESTRICTO. Revisa mi archivo.")
+
+# --- MOSTRAR CHAT ---
 for m in st.session_state.messages:
     role = "assistant" if m["role"] == "model" else "user"
     with st.chat_message(role): st.markdown(m["content"])
 
-if prompt := st.chat_input("Escribe aquí..."):
+# --- PROCESAMIENTO ---
+if prompt := st.chat_input("Escribe aquí tu pregunta..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.rerun()
 
+# --- RESPUESTA DEL MODELO ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
-        with st.spinner("Pensando..."):
+        with st.spinner("Analizando..."):
             try:
-                contenido = [st.session_state.messages[-1]["content"]]
+                user_msg = st.session_state.messages[-1]["content"]
+                contenido = [user_msg]
+                
+                # Si hay archivo subido, lo adjuntamos
                 if archivo:
-                    # Manejo de archivo NUEVO SDK
                     part = types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type)
                     contenido.append(part)
                 
+                # Enviar al modelo
                 resp = st.session_state.chat.send_message(contenido)
+                
                 st.markdown(resp.text)
                 st.session_state.messages.append({"role": "model", "content": resp.text})
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Ocurrió un error: {e}")
