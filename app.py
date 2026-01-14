@@ -7,7 +7,7 @@ import os
 st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="wide")
 st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
-# --- MODELO VIGENTE (2026) ---
+# --- MODELO VIGENTE ---
 MODELO_ACTUAL = "gemini-2.5-flash"
 
 # --- API KEY & CLIENTE ---
@@ -20,10 +20,10 @@ except:
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO (PROMPT DE FLUJO ESTRICTO) ---
+# --- CEREBRO (PROMPT ESTRICTO: ENSEÑAR -> PREGUNTAR) ---
 INSTRUCCIONES_BASE = """
-ROL: Eres un Instructor de Seminario de Hermenéutica.
-FUENTE: Usa EXCLUSIVAMENTE los archivos de la BIBLIOTECA.
+ROL: Eres un Instructor de Seminario de Hermenéutica Expositiva.
+FUENTE: Usa EXCLUSIVAMENTE los archivos de la BIBLIOTECA (abajo).
 
 MODO 1: MAESTRO (Botón 'Aula')
 🛑 REGLA DE ORO: ¡NO preguntes sin antes enseñar!
@@ -41,7 +41,7 @@ def get_prompt():
     texto = INSTRUCCIONES_BASE
     texto += "\n\n=== BIBLIOTECA (TUS ARCHIVOS) ===\n"
     
-    # Leemos los archivos para que el Maestro tenga qué enseñar
+    # Leemos los archivos de la carpeta knowledge
     if os.path.exists("knowledge"):
         found = False
         for f in os.listdir("knowledge"):
@@ -53,11 +53,10 @@ def get_prompt():
                         found = True
                 except: pass
         if not found:
-            texto += "\n[ALERTA: No encontré archivos .txt en la carpeta 'knowledge'. Sin ellos no puedo dar la clase exacta.]\n"
+            texto += "\n[ALERTA: No encontré archivos .txt en la carpeta 'knowledge'. Sin ellos usaré conocimiento general.]\n"
     return texto
 
 # --- CONFIGURACIÓN DEL CHAT ---
-# Inicializar chat si no existe
 if "chat" not in st.session_state or st.session_state.chat is None:
     st.session_state.chat = st.session_state.client.chats.create(
         model=MODELO_ACTUAL,
@@ -73,13 +72,11 @@ if "messages" not in st.session_state: st.session_state.messages = []
 st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Panel de Control")
     archivo = st.file_uploader("📂 Subir Archivo", type=["pdf","txt","md"])
     if archivo: st.success("✅ Archivo cargado")
     
     st.markdown("---")
-    # BOTÓN RESTAURADO (LIMPIEZA NORMAL)
     if st.button("🗑️ Reiniciar Chat", type="primary"):
         st.session_state.chat = None
         st.session_state.messages = []
@@ -113,7 +110,6 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
         with st.spinner("Analizando..."):
             try:
                 msg_content = [st.session_state.messages[-1]["content"]]
-                
                 if archivo:
                     msg_content.append(types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type))
                 
