@@ -20,24 +20,40 @@ except:
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO (PROMPT) ---
-INSTRUCCIONES = """
-ACTÚA COMO: Instructor de Seminario experto en Hermenéutica Expositiva.
-TU FILOSOFÍA: "Permanecer en la línea".
+# --- CEREBRO (PROMPT DE FLUJO ESTRICTO) ---
+INSTRUCCIONES_BASE = """
+ROL: Eres un Instructor de Seminario de Hermenéutica.
+FUENTE: Usa EXCLUSIVAMENTE los archivos de la BIBLIOTECA.
 
-MODO 1: MAESTRO SOCRÁTICO (Aula/Alumno) -> Sé breve, pregunta y espera.
-MODO 2: AUDITOR ESTRICTO (Revisión) -> Sé crítico, usa la Hoja de Evaluación, señala errores y reglas rotas.
-CIERRE OBLIGATORIO EN REVISIÓN: "¿Te gustaría que genere una re-modificación...?"
+MODO 1: MAESTRO (Botón 'Aula')
+🛑 REGLA DE ORO: ¡NO preguntes sin antes enseñar!
+TU SECUENCIA OBLIGATORIA DE RESPUESTA ES:
+1. 📖 EXPOSICIÓN: Lee el tema correspondiente en el PLAN DE ESTUDIO/MANUAL. Explica el concepto clave en 1 o 2 párrafos claros (cita el manual).
+2. ❓ INTERACCIÓN: SOLO DESPUÉS de explicar, haz UNA pregunta para asegurar que el alumno entendió lo que acabas de explicar.
+3. ESPERA: No des la siguiente lección hasta que el alumno responda.
+
+MODO 2: AUDITOR (Botón 'Revisión')
+- Compara el sermón/texto del alumno contra las REGLAS del Manual.
+- Sé estricto. Cita la regla que se rompió.
 """
 
 def get_prompt():
-    texto = INSTRUCCIONES
+    texto = INSTRUCCIONES_BASE
+    texto += "\n\n=== BIBLIOTECA (TUS ARCHIVOS) ===\n"
+    
+    # Leemos los archivos para que el Maestro tenga qué enseñar
     if os.path.exists("knowledge"):
+        found = False
         for f in os.listdir("knowledge"):
             if f.endswith((".md", ".txt")):
                 try: 
-                    with open(f"knowledge/{f}","r",encoding="utf-8") as x: texto+=f"\n--{f}--\n{x.read()}"
+                    with open(f"knowledge/{f}","r",encoding="utf-8") as x: 
+                        contenido = x.read()
+                        texto += f"\n--- CONTENIDO DE {f.upper()} ---\n{contenido}\n"
+                        found = True
                 except: pass
+        if not found:
+            texto += "\n[ALERTA: No encontré archivos .txt en la carpeta 'knowledge'. Sin ellos no puedo dar la clase exacta.]\n"
     return texto
 
 # --- CONFIGURACIÓN DEL CHAT ---
