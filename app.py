@@ -4,11 +4,10 @@ from google.genai import types
 import os
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Instructor Bíblico 2026", page_icon="📖", layout="wide")
+st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="wide")
 st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
 # --- MODELO VIGENTE (2026) ---
-# Usamos el 2.5 Flash que es el estable actual
 MODELO_ACTUAL = "gemini-2.5-flash"
 
 # --- API KEY & CLIENTE ---
@@ -18,7 +17,6 @@ except:
     st.error("⚠️ Falta la API Key en los Secrets.")
     st.stop()
 
-# Inicializar Cliente
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
@@ -26,8 +24,10 @@ if "client" not in st.session_state:
 INSTRUCCIONES = """
 ACTÚA COMO: Instructor de Seminario experto en Hermenéutica Expositiva.
 TU FILOSOFÍA: "Permanecer en la línea".
+
 MODO 1: MAESTRO SOCRÁTICO (Aula/Alumno) -> Sé breve, pregunta y espera.
-MODO 2: AUDITOR ESTRICTO (Revisión) -> Sé crítico, usa la Hoja de Evaluación.
+MODO 2: AUDITOR ESTRICTO (Revisión) -> Sé crítico, usa la Hoja de Evaluación, señala errores y reglas rotas.
+CIERRE OBLIGATORIO EN REVISIÓN: "¿Te gustaría que genere una re-modificación...?"
 """
 
 def get_prompt():
@@ -40,15 +40,9 @@ def get_prompt():
                 except: pass
     return texto
 
-# --- GESTIÓN DE SESIÓN Y MODELO (EVITA EL ERROR DE CACHÉ) ---
-# Si el modelo guardado no es el 2.5, reseteamos el chat para forzar el cambio
-if st.session_state.get("model_name") != MODELO_ACTUAL:
-    st.session_state.model_name = MODELO_ACTUAL
-    st.session_state.chat = None
-    st.session_state.messages = []
-
-# Crear el chat si no existe
-if st.session_state.chat is None:
+# --- CONFIGURACIÓN DEL CHAT ---
+# Inicializar chat si no existe
+if "chat" not in st.session_state or st.session_state.chat is None:
     st.session_state.chat = st.session_state.client.chats.create(
         model=MODELO_ACTUAL,
         config=types.GenerateContentConfig(
@@ -60,18 +54,19 @@ if st.session_state.chat is None:
 if "messages" not in st.session_state: st.session_state.messages = []
 
 # --- INTERFAZ ---
-st.title(f"📖 Instructor Bíblico (v{MODELO_ACTUAL})")
+st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Panel de Control")
     archivo = st.file_uploader("📂 Subir Archivo", type=["pdf","txt","md"])
+    if archivo: st.success("✅ Archivo cargado")
     
     st.markdown("---")
-    # BOTÓN DE RESET MANUAL (CLAVE PARA TU PROBLEMA)
-    if st.button("🔄 Reset Total (Borrar Memoria)", type="primary"):
+    # BOTÓN RESTAURADO (LIMPIEZA NORMAL)
+    if st.button("🗑️ Reiniciar Chat", type="primary"):
         st.session_state.chat = None
         st.session_state.messages = []
-        st.session_state.model_name = None # Forzar recarga
         st.rerun()
 
 # --- 4 BOTONES DE ACCIÓN ---
@@ -79,11 +74,11 @@ c1,c2,c3,c4 = st.columns(4)
 def enviar(t): st.session_state.messages.append({"role":"user","content":t})
 
 with c1: 
-    if st.button("🎓 Aula"): enviar("Modo Aula: Lección 1")
+    if st.button("🎓 Aula"): enviar("Iniciar Modo Aula: Lección 1")
 with c2: 
     if st.button("📝 Alumno"): enviar("Quiero analizar un pasaje (Socrático)")
 with c3: 
-    if st.button("🧑‍🏫 Maestro"): enviar("Modela una interpretación")
+    if st.button("🧑‍🏫 Maestro"): enviar("Modela una interpretación experta")
 with c4: 
     if st.button("🔍 Revisión"): enviar("ACTIVA MODO AUDITOR. Revisa mi archivo.")
 
@@ -93,17 +88,16 @@ for m in st.session_state.messages:
     with st.chat_message(r): st.markdown(m["content"])
 
 # --- LÓGICA DE RESPUESTA ---
-if prompt := st.chat_input("Escribe aquí..."):
+if prompt := st.chat_input("Escribe tu pregunta o respuesta..."):
     st.session_state.messages.append({"role":"user","content":prompt})
     st.rerun()
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
-        with st.spinner(f"Analizando con {MODELO_ACTUAL}..."):
+        with st.spinner("Analizando..."):
             try:
                 msg_content = [st.session_state.messages[-1]["content"]]
                 
-                # Manejo de archivos (SDK Nuevo)
                 if archivo:
                     msg_content.append(types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type))
                 
@@ -112,5 +106,3 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                 st.session_state.messages.append({"role":"model","content":res.text})
             except Exception as e:
                 st.error(f"Error: {e}")
-                if "404" in str(e):
-                    st.warning("⚠️ Error 404: El modelo no existe. Intenta cambiar MODELO_ACTUAL en el código.")
