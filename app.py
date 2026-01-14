@@ -58,8 +58,8 @@ if "chat" not in st.session_state or st.session_state.chat is None:
 
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# --- FUNCIÓN "CALLBACK" (LA SOLUCIÓN AL ERROR) ---
-# Esta función se ejecuta ANTES de que la página se redibuje, evitando el error de Node
+# --- FUNCIONES SEGURAS (CALLBACKS) ---
+# Estas funciones evitan el error "removeChild"
 def enviar_mensaje(texto):
     st.session_state.messages.append({"role": "user", "content": texto})
 
@@ -71,7 +71,6 @@ def reiniciar():
 st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Panel de Control")
     archivo = st.file_uploader("📂 Subir Archivo", type=["pdf","txt","md"])
     if archivo: st.success("✅ Archivo cargado")
@@ -80,7 +79,7 @@ with st.sidebar:
     # Usamos on_click para mayor estabilidad
     st.button("🗑️ Reiniciar Chat", type="primary", on_click=reiniciar)
 
-# --- 4 BOTONES DE ACCIÓN (CON CALLBACKS) ---
+# --- 4 BOTONES DE ACCIÓN (CON PROTECCIÓN) ---
 c1,c2,c3,c4 = st.columns(4)
 
 with c1: 
@@ -99,7 +98,6 @@ for m in st.session_state.messages:
 
 # --- INPUT DE USUARIO ---
 if prompt := st.chat_input("Escribe tu respuesta..."):
-    # Agregamos directamente y el rerun es automático al final del script
     st.session_state.messages.append({"role":"user","content":prompt})
     st.rerun()
 
