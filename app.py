@@ -74,6 +74,22 @@ with st.sidebar:
     st.title("Panel de Control")
     archivo = st.file_uploader("📂 Subir Archivo", type=["pdf","txt","md"])
     if archivo: st.success("✅ Archivo cargado")
+
+# --- VERIFICADOR DE BIBLIOTECA ---
+    st.divider() # Línea divisoria
+    st.write("📚 **Estado de la Biblioteca:**")
+    
+    if os.path.exists("knowledge"):
+        archivos_leidos = [f for f in os.listdir("knowledge") if f.endswith((".md", ".txt"))]
+        
+        if archivos_leidos:
+            st.success(f"✅ {len(archivos_leidos)} archivos cargados")
+            for arch in archivos_leidos:
+                st.code(arch, language="markdown")
+        else:
+            st.error("⚠️ La carpeta existe pero no tiene archivos .md o .txt")
+    else:
+        st.error("❌ No encuentro la carpeta 'knowledge' en el sistema")
     
     st.markdown("---")
     # Usamos on_click para mayor estabilidad
