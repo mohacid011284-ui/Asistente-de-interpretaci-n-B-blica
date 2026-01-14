@@ -94,7 +94,7 @@ if "model" not in st.session_state:
     # Cargamos TODA la biblioteca al iniciar
     prompt_final = get_system_prompt()
     st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-flash-latest", 
+        model_name="gemini-1.5-flash",
         system_instruction=prompt_final
     )
 
