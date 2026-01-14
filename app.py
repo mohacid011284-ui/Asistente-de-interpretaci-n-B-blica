@@ -9,36 +9,34 @@ st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="w
 st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
 # --- 🧠 EL CEREBRO (INSTRUCCIONES FIJAS) ---
-# Fíjate que el texto empieza y termina con tres comillas (""")
 INSTRUCCIONES_BASE = """
 ACTÚA COMO: Un Instructor de Seminario experto en Hermenéutica.
 TU FILOSOFÍA: "Permanecer en la línea". No creas significado, lo descubres.
 
 🚨 REGLAS DE INTERACCIÓN (CRÍTICO - LÉELAS SIEMPRE):
-1. **PROHIBIDO DAR DISCURSOS LARGOS:** No expliques las 3 fases de golpe. No sueltes bloques gigantes de texto.
-2. **UNA COSA A LA VEZ:** Tu método es PASO A PASO.
-   - Primero explicas un concepto breve (máximo 3 frases).
-   - Inmediatamente haces UNA pregunta o pones un ejercicio.
-   - **DETENTE Y ESPERA** a que el alumno responda.
-3. **NO AVANCES** a la siguiente fase hasta que el alumno haya completado la anterior.
+1. **PROHIBIDO DAR DISCURSOS LARGOS:** No expliques las 3 fases de golpe.
+2. **UNA COSA A LA VEZ:** Tu método es PASO A PASO. Explica -> Pregunta -> Espera.
+3. **NO AVANCES** hasta que el alumno responda.
 
 MODO AULA (LECCIONES):
-- Si el usuario inicia una lección, da solo la definición del tema y pide un ejemplo o haz una pregunta de control.
-- Ejemplo: "Hoy veremos la Línea Melódica. Es el tema principal del libro. ¿Podrías decirme cuál crees que es el tema de Jonás?" (Y ESPERAS).
+- Si inicia lección, da definición breve y pregunta de control.
 
 MODO ALUMNO (ANÁLISIS):
-1. Pide el texto bíblico. -> ESPERA.
-2. Pregunta por el Género Literario. -> ESPERA.
-3. Pregunta por el Contexto Inmediato. -> ESPERA.
-4. Solo cuando la Observación (Fase 1) esté firme, pasas a la Teología (Fase 2).
+1. Pide el texto. -> ESPERA.
+2. Observación (Género/Contexto). -> ESPERA.
+3. Teología. -> ESPERA.
 
-TU OBJETIVO: Que el alumno PIENSE, no que lea. Sé breve, directo y pedagógico.
+MODO REVISIÓN DE DOCUMENTOS (NUEVO):
+- Si el usuario sube un archivo (PDF/Texto), analízalo COMPLETO.
+- Busca: ¿El alumno permaneció en la línea? ¿Alegorizó? ¿Hay conexión legítima con Cristo?
+- Da retroalimentación constructiva: 1. Puntos Fuertes, 2. Áreas de Mejora (Errores de método), 3. Calificación sugerida (0-100).
+
+TU OBJETIVO: Que el alumno PIENSE. Sé breve, directo y pedagógico.
 """
 
 # --- FUNCIÓN PARA CARGAR EL MANUAL DESDE GITHUB ---
 def get_system_prompt():
     prompt_completo = INSTRUCCIONES_BASE
-    # Intentamos leer el manual que subiste a la carpeta knowledge
     ruta_manual = "knowledge/manual_completo_v2.md"
     if os.path.exists(ruta_manual):
         try:
@@ -49,11 +47,20 @@ def get_system_prompt():
             pass
     return prompt_completo
 
-# --- SIDEBAR ---
+# --- SIDEBAR (BARRA LATERAL) ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Aula Virtual")
+    
+    # --- ZONA DE CARGA DE ARCHIVOS (NUEVO) ---
+    st.markdown("### 📂 Buzón de Tareas")
+    archivo_subido = st.file_uploader("Sube tu sermón o tarea (PDF/TXT)", type=["pdf", "txt", "md"])
+    
+    if archivo_subido:
+        st.success("✅ Archivo cargado y listo para revisión.")
+    
     st.markdown("---")
+    st.header("🔗 Enlaces")
     st.link_button("Ir a Google Classroom", "https://classroom.google.com/w/ODM5MzY1NTk0Mzc5/t/all")
     st.markdown("---")
     if st.button("🗑️ Borrar Chat", type="primary"):
@@ -80,11 +87,12 @@ if "messages" not in st.session_state:
 
 # --- INTERFAZ ---
 st.title("📖 Instructor de Interpretación Bíblica")
-st.caption("Filosofía: Permanecer en la línea")
+st.caption("Filosofía: Permanecer en la línea | Sube tu PDF en la barra lateral")
 
-# Botones
+# Botones Rápidos
 c1, c2, c3, c4 = st.columns(4)
 def click(txt): st.session_state.messages.append({"role": "user", "content": txt})
+
 with c1: 
     if st.button("🎓 Aula"): click("Iniciar Modo Aula: Lección 1")
 with c2: 
@@ -92,23 +100,45 @@ with c2:
 with c3: 
     if st.button("🧑‍🏫 Maestro"): click("Modela una interpretación")
 with c4: 
-    if st.button("🔍 Revisión"): click("Revisa mi trabajo según el manual")
+    # Modificamos el botón de revisión para mencionar el archivo
+    if st.button("🔍 Revisión"): click("He subido mi documento en el panel lateral. Por favor revísalo rigurosamente.")
 
 # Chat
 for m in st.session_state.messages:
     with st.chat_message(m["role"]): st.markdown(m["content"])
 
+# --- LÓGICA DE PROCESAMIENTO ---
 if prompt := st.chat_input("Escribe aquí..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.rerun()
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
-        with st.spinner("Pensando..."):
+        with st.spinner("Analizando..."):
             try:
-                h = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
-                chat = st.session_state.model.start_chat(history=h)
-                response = chat.send_message(st.session_state.messages[-1]["content"])
+                # Preparamos el historial
+                history = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
+                chat = st.session_state.model.start_chat(history=history)
+                
+                # REVISAMOS SI HAY ARCHIVO PARA ADJUNTAR
+                user_message = st.session_state.messages[-1]["content"]
+                
+                if archivo_subido:
+                    # Convertimos el archivo a formato que Gemini entiende
+                    bytes_data = archivo_subido.getvalue()
+                    mime_type = archivo_subido.type
+                    
+                    documento = {
+                        "mime_type": mime_type,
+                        "data": bytes_data
+                    }
+                    
+                    # Enviamos TEXTO + DOCUMENTO
+                    response = chat.send_message([user_message, documento])
+                else:
+                    # Enviamos SOLO TEXTO
+                    response = chat.send_message(user_message)
+                
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text})
             except Exception as e:
