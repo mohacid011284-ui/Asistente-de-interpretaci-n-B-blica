@@ -20,10 +20,10 @@ except:
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO (PROMPT ESTRICTO: ENSEÑAR -> PREGUNTAR) ---
+# --- CEREBRO (PROMPT ESTRICTO) ---
 INSTRUCCIONES_BASE = """
 ROL: Eres un Instructor de Seminario de Hermenéutica Expositiva.
-FUENTE: Usa EXCLUSIVAMENTE los archivos de la BIBLIOTECA (abajo).
+FUENTE: Usa EXCLUSIVAMENTE los archivos de la BIBLIOTECA.
 
 MODO 1: MAESTRO (Botón 'Aula')
 🛑 REGLA DE ORO: ¡NO preguntes sin antes enseñar!
@@ -40,71 +40,70 @@ MODO 2: AUDITOR (Botón 'Revisión')
 def get_prompt():
     texto = INSTRUCCIONES_BASE
     texto += "\n\n=== BIBLIOTECA (TUS ARCHIVOS) ===\n"
-    
-    # Leemos los archivos de la carpeta knowledge
     if os.path.exists("knowledge"):
-        found = False
         for f in os.listdir("knowledge"):
             if f.endswith((".md", ".txt")):
                 try: 
                     with open(f"knowledge/{f}","r",encoding="utf-8") as x: 
-                        contenido = x.read()
-                        texto += f"\n--- CONTENIDO DE {f.upper()} ---\n{contenido}\n"
-                        found = True
+                        texto += f"\n--- CONTENIDO DE {f.upper()} ---\n{x.read()}\n"
                 except: pass
-        if not found:
-            texto += "\n[ALERTA: No encontré archivos .txt en la carpeta 'knowledge'. Sin ellos usaré conocimiento general.]\n"
     return texto
 
-# --- CONFIGURACIÓN DEL CHAT ---
+# --- CHAT ---
 if "chat" not in st.session_state or st.session_state.chat is None:
     st.session_state.chat = st.session_state.client.chats.create(
         model=MODELO_ACTUAL,
-        config=types.GenerateContentConfig(
-            system_instruction=get_prompt(),
-            temperature=0.3
-        )
+        config=types.GenerateContentConfig(system_instruction=get_prompt(), temperature=0.3)
     )
 
 if "messages" not in st.session_state: st.session_state.messages = []
+
+# --- FUNCIÓN "CALLBACK" (LA SOLUCIÓN AL ERROR) ---
+# Esta función se ejecuta ANTES de que la página se redibuje, evitando el error de Node
+def enviar_mensaje(texto):
+    st.session_state.messages.append({"role": "user", "content": texto})
+
+def reiniciar():
+    st.session_state.chat = None
+    st.session_state.messages = []
 
 # --- INTERFAZ ---
 st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Panel de Control")
     archivo = st.file_uploader("📂 Subir Archivo", type=["pdf","txt","md"])
     if archivo: st.success("✅ Archivo cargado")
     
     st.markdown("---")
-    if st.button("🗑️ Reiniciar Chat", type="primary"):
-        st.session_state.chat = None
-        st.session_state.messages = []
-        st.rerun()
+    # Usamos on_click para mayor estabilidad
+    st.button("🗑️ Reiniciar Chat", type="primary", on_click=reiniciar)
 
-# --- 4 BOTONES DE ACCIÓN ---
+# --- 4 BOTONES DE ACCIÓN (CON CALLBACKS) ---
 c1,c2,c3,c4 = st.columns(4)
-def enviar(t): st.session_state.messages.append({"role":"user","content":t})
 
 with c1: 
-    if st.button("🎓 Aula"): enviar("Iniciar Modo Aula: Lección 1")
+    st.button("🎓 Aula", on_click=enviar_mensaje, args=("Iniciar Modo Aula: Lección 1",))
 with c2: 
-    if st.button("📝 Alumno"): enviar("Quiero analizar un pasaje (Socrático)")
+    st.button("📝 Alumno", on_click=enviar_mensaje, args=("Quiero analizar un pasaje (Socrático)",))
 with c3: 
-    if st.button("🧑‍🏫 Maestro"): enviar("Modela una interpretación experta")
+    st.button("🧑‍🏫 Maestro", on_click=enviar_mensaje, args=("Modela una interpretación experta",))
 with c4: 
-    if st.button("🔍 Revisión"): enviar("ACTIVA MODO AUDITOR. Revisa mi archivo.")
+    st.button("🔍 Revisión", on_click=enviar_mensaje, args=("ACTIVA MODO AUDITOR. Revisa mi archivo.",))
 
-# --- CHAT LOOP ---
+# --- MOSTRAR CHAT ---
 for m in st.session_state.messages:
     r = "assistant" if m["role"]=="model" else "user"
     with st.chat_message(r): st.markdown(m["content"])
 
-# --- LÓGICA DE RESPUESTA ---
-if prompt := st.chat_input("Escribe tu pregunta o respuesta..."):
+# --- INPUT DE USUARIO ---
+if prompt := st.chat_input("Escribe tu respuesta..."):
+    # Agregamos directamente y el rerun es automático al final del script
     st.session_state.messages.append({"role":"user","content":prompt})
     st.rerun()
 
+# --- RESPUESTA DEL MODELO ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
         with st.spinner("Analizando..."):
