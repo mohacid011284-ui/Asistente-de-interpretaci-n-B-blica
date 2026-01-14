@@ -75,7 +75,7 @@ if "chat" not in st.session_state or st.session_state.chat is None:
     
     # AQUÍ ES DONDE ELIGES EL MODELO (2.0 o 2.5)
     st.session_state.chat = st.session_state.client.chats.create(
-        model="gemini-2.0-flash", 
+       model="gemini-1.5-flash",
         config=types.GenerateContentConfig(
             system_instruction=prompt_final,
             temperature=0.3 # Un poco más preciso para teología
