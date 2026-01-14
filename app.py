@@ -17,7 +17,7 @@ except:
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO (INSTRUCCIONES + KNOWLEDGE) ---
+# --- CEREBRO (INSTRUCCIONES) ---
 INSTRUCCIONES = """
 ACTÚA COMO: Instructor de Seminario experto en Hermenéutica Expositiva.
 TU FILOSOFÍA: "Permanecer en la línea".
@@ -29,7 +29,6 @@ CIERRE OBLIGATORIO EN REVISIÓN: "¿Te gustaría que genere una re-modificación
 
 def get_prompt():
     texto = INSTRUCCIONES
-    # Intenta leer archivos de la carpeta knowledge
     if os.path.exists("knowledge"):
         for f in os.listdir("knowledge"):
             if f.endswith((".md", ".txt")):
@@ -41,7 +40,7 @@ def get_prompt():
 
 # --- CONFIGURACIÓN DEL CHAT ---
 if "chat" not in st.session_state or st.session_state.chat is None:
-    # Usamos el modelo ESTABLE (1.5 Flash) que ya tienes configurado
+    # Usamos el modelo ESTABLE (1.5 Flash)
     st.session_state.chat = st.session_state.client.chats.create(
         model="gemini-1.5-flash", 
         config=types.GenerateContentConfig(
@@ -57,11 +56,9 @@ if "messages" not in st.session_state:
 st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Panel de Control")
     archivo = st.file_uploader("📂 Subir Sermón/Hoja", type=["pdf", "txt", "md"])
-    if archivo:
-        st.success("✅ Archivo listo para revisión")
+    if archivo: st.success("✅ Archivo listo")
         
     st.markdown("---")
     if st.button("🗑️ Reiniciar Chat", type="primary"):
@@ -69,25 +66,20 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
-# --- BOTONES DE ACCIÓN (AQUÍ ESTÁN LOS 4) ---
+# --- BOTONES DE ACCIÓN (LOS 4 BOTONES) ---
 c1, c2, c3, c4 = st.columns(4)
 
-# Función auxiliar para enviar mensajes al chat
 def enviar(txt): 
     st.session_state.messages.append({"role": "user", "content": txt})
 
 with c1: 
-    if st.button("🎓 Aula"): 
-        enviar("Iniciar Modo Aula: Lección 1")
+    if st.button("🎓 Aula"): enviar("Iniciar Modo Aula: Lección 1")
 with c2: 
-    if st.button("📝 Alumno"): 
-        enviar("Quiero analizar un pasaje (Modo Socrático)")
+    if st.button("📝 Alumno"): enviar("Quiero analizar un pasaje (Modo Socrático)")
 with c3: 
-    if st.button("🧑‍🏫 Maestro"): 
-        enviar("Modela una interpretación experta")
+    if st.button("🧑‍🏫 Maestro"): enviar("Modela una interpretación experta")
 with c4: 
-    if st.button("🔍 Revisión"): 
-        enviar("He subido mi documento. ACTIVA MODO AUDITOR ESTRICTO. Revisa mi archivo.")
+    if st.button("🔍 Revisión"): enviar("He subido mi documento. ACTIVA MODO AUDITOR ESTRICTO.")
 
 # --- MOSTRAR CHAT ---
 for m in st.session_state.messages:
@@ -95,11 +87,10 @@ for m in st.session_state.messages:
     with st.chat_message(role): st.markdown(m["content"])
 
 # --- PROCESAMIENTO ---
-if prompt := st.chat_input("Escribe aquí tu pregunta..."):
+if prompt := st.chat_input("Escribe aquí..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.rerun()
 
-# --- RESPUESTA DEL MODELO ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
         with st.spinner("Analizando..."):
@@ -107,15 +98,12 @@ if st.session_state.messages and st.session_state.messages[-1]["role"] == "user"
                 user_msg = st.session_state.messages[-1]["content"]
                 contenido = [user_msg]
                 
-                # Si hay archivo subido, lo adjuntamos
                 if archivo:
                     part = types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type)
                     contenido.append(part)
                 
-                # Enviar al modelo
                 resp = st.session_state.chat.send_message(contenido)
-                
                 st.markdown(resp.text)
                 st.session_state.messages.append({"role": "model", "content": resp.text})
             except Exception as e:
-                st.error(f"Ocurrió un error: {e}")
+                st.error(f"Error: {e}")
