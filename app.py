@@ -58,7 +58,7 @@ def load_system_prompt():
 if "model" not in st.session_state:
     system_instruction = load_system_prompt()
     st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-2.0-flash", # Usamos el modelo que apareció en tu lista
+        model_name="gemini-2.0-flash",
         system_instruction=system_instruction
     )
 
