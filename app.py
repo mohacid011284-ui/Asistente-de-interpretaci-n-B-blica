@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import os
 
 # CONFIGURACIÓN DE PÁGINA
@@ -8,59 +9,38 @@ st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="w
 # ESTILOS
 st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
-# --- 🧠 EL CEREBRO (INSTRUCCIONES FIJAS) ---
+# --- 🧠 EL CEREBRO (INSTRUCCIONES + CONOCIMIENTO) ---
 INSTRUCCIONES_BASE = """
 ACTÚA COMO: Un Instructor de Seminario experto en Hermenéutica Expositiva.
 TU FILOSOFÍA: "Permanecer en la línea".
 
 🚨 PROTOCOLO DE COMPORTAMIENTO:
+MODO 1: MAESTRO SOCRÁTICO (Botones Aula/Alumno) -> Sé breve, pregunta y espera.
+MODO 2: AUDITOR ESTRICTO (Botón Revisión / Archivo subido) -> Sé crítico, llena la hoja de evaluación, señala errores y reglas rotas.
 
-MODO 1: MAESTRO SOCRÁTICO (Botones Aula/Alumno)
-- Si el usuario quiere aprender, sé breve, haz preguntas y espera.
-
-MODO 2: AUDITOR ESTRICTO (Botón Revisión / Archivo subido)
-- TU TONO: Crítico fuerte, directo, sin "suavizar" los errores, pero asertivo.
-- TU MISIÓN: Detectar desviaciones de la "Línea Melódica" y del Texto Bíblico.
-
-CUANDO REVISES UN DOCUMENTO, SIGUE ESTA ESTRUCTURA PARA CADA PUNTO DEBIL:
-1. ❌ EL ERROR: Cita la frase exacta o la idea donde falló.
-2. 📜 LA REGLA ROTA: Menciona qué principio hermenéutico se violó (Busca en tu CONOCIMIENTO ADQUIRIDO).
-3. 🧠 EL PORQUÉ: Explica por qué es un error teológico o técnico.
-4. 💡 LA MEJORA: Diles exactamente qué debieron haber hecho.
-
-AL FINAL DEL REPORTE, DEBES EVALUAR USANDO LA HOJA DE EVALUACIÓN OFICIAL (SI LA TIENES EN TU CONOCIMIENTO) Y LUEGO HACER LA OFERTA FINAL:
-
-⚠️ CIERRE OBLIGATORIO:
-Al terminar tu crítica, SIEMPRE pregunta:
-"¿Te gustaría que genere una re-modificación de tu sermón/trabajo aplicando estas correcciones para que veas cómo quedaría?"
+⚠️ CIERRE OBLIGATORIO EN REVISIÓN:
+"¿Te gustaría que genere una re-modificación de tu sermón/trabajo aplicando estas correcciones?"
 """
 
-# --- FUNCIÓN PARA LEER TODA LA BIBLIOTECA DE CONOCIMIENTO ---
 def get_system_prompt():
     prompt_completo = INSTRUCCIONES_BASE
     carpeta_knowledge = "knowledge"
     
-    # Verificamos si la carpeta existe
     if os.path.exists(carpeta_knowledge):
-        prompt_completo += "\n\n=== BIBLIOTECA DE CONOCIMIENTOS (SIEMPRE ACTIVA) ===\n"
-        
-        # Leemos CADA archivo que termine en .md o .txt dentro de la carpeta
         archivos_encontrados = False
+        prompt_completo += "\n\n=== BIBLIOTECA DE CONOCIMIENTOS ===\n"
         for archivo_nombre in os.listdir(carpeta_knowledge):
             if archivo_nombre.endswith((".md", ".txt")):
                 ruta_completa = os.path.join(carpeta_knowledge, archivo_nombre)
                 try:
                     with open(ruta_completa, "r", encoding="utf-8") as f:
                         contenido = f.read()
-                        # Añadimos el contenido con un título para que la IA sepa de qué tema trata
                         prompt_completo += f"\n--- TEMA: {archivo_nombre.upper()} ---\n{contenido}\n"
                         archivos_encontrados = True
-                except Exception as e:
-                    print(f"Error leyendo {archivo_nombre}: {e}")
-        
+                except:
+                    pass
         if not archivos_encontrados:
-            prompt_completo += "\n(No se encontraron archivos de texto en la carpeta knowledge)."
-            
+            prompt_completo += "\n(No se encontraron archivos en knowledge)."
     return prompt_completo
 
 # --- SIDEBAR ---
@@ -69,33 +49,37 @@ with st.sidebar:
     st.title("Aula Virtual")
     
     st.markdown("### 📂 Buzón de Revisión")
-    st.info("Sube tu sermón/tarea para una auditoría estricta.")
     archivo_subido = st.file_uploader("Sube PDF, TXT o MD", type=["pdf", "txt", "md"])
-    
     if archivo_subido:
         st.success("✅ Archivo cargado.")
     
     st.markdown("---")
-    st.link_button("Ir a Google Classroom", "https://classroom.google.com/w/ODM5MzY1NTk0Mzc5/t/all")
-    st.markdown("---")
     if st.button("🗑️ Borrar Chat", type="primary"):
         st.session_state.messages = []
+        st.session_state.chat = None # Reseteamos el chat también
         st.rerun()
 
-# --- API KEY ---
+# --- NUEVO CLIENTE GOOGLE GENAI (SDK MODERNO) ---
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=api_key)
-except:
+except KeyError:
     st.error("Falta la API Key en Secrets.")
+    st.stop()
 
-# --- INICIALIZAR MODELO ---
-if "model" not in st.session_state:
-    # Cargamos TODA la biblioteca al iniciar
+if "client" not in st.session_state:
+    st.session_state.client = genai.Client(api_key=api_key)
+
+# --- INICIALIZAR CHAT ---
+if "chat" not in st.session_state or st.session_state.chat is None:
     prompt_final = get_system_prompt()
-    st.session_state.model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=prompt_final
+    
+    # AQUÍ ES DONDE ELIGES EL MODELO (2.0 o 2.5)
+    st.session_state.chat = st.session_state.client.chats.create(
+        model="gemini-2.0-flash", 
+        config=types.GenerateContentConfig(
+            system_instruction=prompt_final,
+            temperature=0.3 # Un poco más preciso para teología
+        ),
     )
 
 if "messages" not in st.session_state:
@@ -103,7 +87,7 @@ if "messages" not in st.session_state:
 
 # --- INTERFAZ ---
 st.title("📖 Instructor de Interpretación Bíblica")
-st.caption("Filosofía: Permanecer en la línea")
+st.caption("Filosofía: Permanecer en la línea | Powered by Google GenAI SDK")
 
 # Botones
 c1, c2, c3, c4 = st.columns(4)
@@ -116,33 +100,48 @@ with c2:
 with c3: 
     if st.button("🧑‍🏫 Maestro"): click("Modela una interpretación")
 with c4: 
-    if st.button("🔍 Revisión"): click("He subido mi documento. ACTIVA EL MODO AUDITOR ESTRICTO. Sé duro, señala errores, reglas rotas y propón mejoras. Al final pregúntame si quiero la re-modificación.")
+    if st.button("🔍 Revisión"): click("He subido mi documento. ACTIVA EL MODO AUDITOR ESTRICTO.")
 
-# Chat
+# Mostrar Chat
 for m in st.session_state.messages:
-    with st.chat_message(m["role"]): st.markdown(m["content"])
+    role_to_show = "assistant" if m["role"] == "model" else "user"
+    with st.chat_message(role_to_show): 
+        st.markdown(m["content"])
 
-# --- PROCESAMIENTO ---
+# --- LÓGICA DE PROCESAMIENTO (NUEVO SDK) ---
 if prompt := st.chat_input("Escribe aquí..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.rerun()
 
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
-        with st.spinner("Consultando biblioteca teológica..."):
+        with st.spinner("Analizando con nueva teconología..."):
             try:
-                history = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages[:-1]]
-                chat = st.session_state.model.start_chat(history=history)
-                
                 user_msg = st.session_state.messages[-1]["content"]
                 
-                if archivo_subido:
-                    datos = {"mime_type": archivo_subido.type, "data": archivo_subido.getvalue()}
-                    response = chat.send_message([user_msg, datos])
-                else:
-                    response = chat.send_message(user_msg)
+                # Manejo de Archivos con el nuevo SDK
+                message_parts = [user_msg]
                 
+                if archivo_subido:
+                    # Convertimos a bytes para el nuevo formato
+                    file_bytes = archivo_subido.getvalue()
+                    file_mime = archivo_subido.type
+                    
+                    # Creamos la 'Part' compatible con el nuevo SDK
+                    file_part = types.Part.from_bytes(
+                        data=file_bytes,
+                        mime_type=file_mime
+                    )
+                    message_parts.append(file_part)
+                
+                # Enviar mensaje
+                response = st.session_state.chat.send_message(message_parts)
+                
+                # Mostrar respuesta
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "model", "content": response.text})
+                
             except Exception as e:
-                st.error(f"Error: {e}")
+                st.error(f"Error del sistema: {e}")
+                if "429" in str(e):
+                    st.warning("⚠️ Cuota excedida. El modelo 2.0/2.5 tiene límites estrictos. Intenta en un minuto.")
