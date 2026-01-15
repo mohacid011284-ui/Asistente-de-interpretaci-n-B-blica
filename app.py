@@ -7,59 +7,65 @@ import os
 st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="wide")
 st.markdown("""<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""", unsafe_allow_html=True)
 
-# --- MODELO VIGENTE ---
-MODELO_ACTUAL = "gemini-2.5-flash"
-
-# --- API KEY & CLIENTE ---
+# --- API KEY ---
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
 except:
-    st.error("⚠️ Falta la API Key en los Secrets.")
+    st.error("⚠️ Falta API Key")
     st.stop()
 
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO (PROMPT ESTRICTO) ---
+# --- CEREBRO (PROMPT MODIFICADO PARA LEER TU GUIÓN EXACTO) ---
 INSTRUCCIONES_BASE = """
 ROL: Eres un Instructor de Seminario de Hermenéutica Expositiva.
-FUENTE: Usa EXCLUSIVAMENTE los archivos de la BIBLIOTECA.
+INSTRUCCIÓN SUPREMA: NO INVENTES CONTENIDO. Sigue estrictamente las secciones del archivo cargado.
 
-MODO 1: MAESTRO (Botón 'Aula')
-🛑 REGLA DE ORO: ¡NO preguntes sin antes enseñar!
-TU SECUENCIA OBLIGATORIA DE RESPUESTA ES:
-1. 📖 EXPOSICIÓN: Lee el tema correspondiente en el PLAN DE ESTUDIO/MANUAL. Explica el concepto clave en 1 o 2 párrafos claros (cita el manual).
-2. ❓ INTERACCIÓN: SOLO DESPUÉS de explicar, haz UNA pregunta para asegurar que el alumno entendió lo que acabas de explicar.
-3. ESPERA: No des la siguiente lección hasta que el alumno responda.
+CUANDO EL USUARIO PRESIONE UN BOTÓN, ACTÚA ASÍ:
 
-MODO 2: AUDITOR (Botón 'Revisión')
-- Compara el sermón/texto del alumno contra las REGLAS del Manual.
-- Sé estricto. Cita la regla que se rompió.
+🟢 MODO AULA (Botón 'Aula')
+1. Busca en el archivo actual la sección que dice "### [CONTENIDO_AULA]".
+2. Exponlo tal cual está escrito.
+3. Al final, haz ÚNICAMENTE la pregunta que aparece en "### [PREGUNTA_AULA]".
+
+🟡 MODO ALUMNO (Botón 'Alumno' - Socrático)
+1. Busca la sección "### [GUIA_SOCRATICA]".
+2. Usa esas preguntas específicas para guiar al alumno. No le des la respuesta.
+
+🔴 MODO REVISIÓN (Botón 'Revisión')
+1. Busca la sección "### [CRITERIO_EVALUACION]".
+2. Usa esos puntos para calificar lo que el alumno escribió.
+
+🔵 MODO MAESTRO (Botón 'Maestro')
+1. Modela la respuesta correcta basándote en la teoría.
 """
 
 def get_prompt():
     texto = INSTRUCCIONES_BASE
-    texto += "\n\n=== BIBLIOTECA (TUS ARCHIVOS) ===\n"
+    texto += "\n\n=== CONTENIDO DE LA LECCIÓN ACTUAL ===\n"
+    
+    # Aquí cargamos TODO el contenido ordenado para que la IA tenga el guion completo
     if os.path.exists("knowledge"):
-        for f in os.listdir("knowledge"):
-            if f.endswith((".md", ".txt")):
-                try: 
-                    with open(f"knowledge/{f}","r",encoding="utf-8") as x: 
-                        texto += f"\n--- CONTENIDO DE {f.upper()} ---\n{x.read()}\n"
-                except: pass
+        archivos_ordenados = sorted([f for f in os.listdir("knowledge") if f.endswith((".md", ".txt"))])
+        for f in archivos_ordenados:
+            try: 
+                with open(f"knowledge/{f}","r",encoding="utf-8") as x: 
+                    # Le damos el nombre del archivo para que sepa en qué "paso" va
+                    texto += f"\n--- ARCHIVO: {f} ---\n{x.read()}\n"
+            except: pass
     return texto
 
 # --- CHAT ---
 if "chat" not in st.session_state or st.session_state.chat is None:
     st.session_state.chat = st.session_state.client.chats.create(
-        model=MODELO_ACTUAL,
-        config=types.GenerateContentConfig(system_instruction=get_prompt(), temperature=0.3)
+        model="gemini-2.5-flash",
+        config=types.GenerateContentConfig(system_instruction=get_prompt(), temperature=0.2) # Temp baja para que sea obediente
     )
 
 if "messages" not in st.session_state: st.session_state.messages = []
 
-# --- FUNCIONES SEGURAS (CALLBACKS) ---
-# Estas funciones evitan el error "removeChild"
+# --- CALLBACKS ---
 def enviar_mensaje(texto):
     st.session_state.messages.append({"role": "user", "content": texto})
 
@@ -71,63 +77,43 @@ def reiniciar():
 st.title("📖 Instructor de Interpretación Bíblica")
 
 with st.sidebar:
+    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
     st.title("Panel de Control")
-    archivo = st.file_uploader("📂 Subir Archivo", type=["pdf","txt","md"])
-    if archivo: st.success("✅ Archivo cargado")
-
-# --- VERIFICADOR DE BIBLIOTECA ---
-    st.divider() # Línea divisoria
-    st.write("📚 **Estado de la Biblioteca:**")
-    
-    if os.path.exists("knowledge"):
-        archivos_leidos = [f for f in os.listdir("knowledge") if f.endswith((".md", ".txt"))]
-        
-        if archivos_leidos:
-            st.success(f"✅ {len(archivos_leidos)} archivos cargados")
-            for arch in archivos_leidos:
-                st.code(arch, language="markdown")
-        else:
-            st.error("⚠️ La carpeta existe pero no tiene archivos .md o .txt")
-    else:
-        st.error("❌ No encuentro la carpeta 'knowledge' en el sistema")
+    archivo = st.file_uploader("📂 Subir Tarea", type=["pdf","txt","md"])
+    if archivo: st.success("✅ Archivo recibido")
     
     st.markdown("---")
-    # Usamos on_click para mayor estabilidad
     st.button("🗑️ Reiniciar Chat", type="primary", on_click=reiniciar)
+    # ¡HEMOS ELIMINADO LA LISTA DE ARCHIVOS VISIBLE! 🕵️‍♂️
 
-# --- 4 BOTONES DE ACCIÓN (CON PROTECCIÓN) ---
+# --- BOTONES ---
 c1,c2,c3,c4 = st.columns(4)
 
 with c1: 
-    st.button("🎓 Aula", on_click=enviar_mensaje, args=("Iniciar Modo Aula: Lección 1",))
+    st.button("🎓 Aula", on_click=enviar_mensaje, args=("MODO AULA: Expón la lección actual siguiendo el guion de [CONTENIDO_AULA] y termina con [PREGUNTA_AULA].",))
 with c2: 
-    st.button("📝 Alumno", on_click=enviar_mensaje, args=("Quiero analizar un pasaje (Socrático)",))
+    st.button("📝 Alumno", on_click=enviar_mensaje, args=("MODO ALUMNO: Inicia el diálogo socrático usando la [GUIA_SOCRATICA].",))
 with c3: 
-    st.button("🧑‍🏫 Maestro", on_click=enviar_mensaje, args=("Modela una interpretación experta",))
+    st.button("🧑‍🏫 Maestro", on_click=enviar_mensaje, args=("MODO MAESTRO: Muestra cómo se hace.",))
 with c4: 
-    st.button("🔍 Revisión", on_click=enviar_mensaje, args=("ACTIVA MODO AUDITOR. Revisa mi archivo.",))
+    st.button("🔍 Revisión", on_click=enviar_mensaje, args=("MODO REVISIÓN: Evalúa mi respuesta usando [CRITERIO_EVALUACION].",))
 
-# --- MOSTRAR CHAT ---
+# --- CHAT LOOP ---
 for m in st.session_state.messages:
     r = "assistant" if m["role"]=="model" else "user"
     with st.chat_message(r): st.markdown(m["content"])
 
-# --- INPUT DE USUARIO ---
-if prompt := st.chat_input("Escribe tu respuesta..."):
+if prompt := st.chat_input("Respuesta..."):
     st.session_state.messages.append({"role":"user","content":prompt})
     st.rerun()
 
-# --- RESPUESTA DEL MODELO ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
-        with st.spinner("Analizando..."):
+        with st.spinner("..."):
             try:
                 msg_content = [st.session_state.messages[-1]["content"]]
-                if archivo:
-                    msg_content.append(types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type))
-                
+                if archivo: msg_content.append(types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type))
                 res = st.session_state.chat.send_message(msg_content)
                 st.markdown(res.text)
                 st.session_state.messages.append({"role":"model","content":res.text})
-            except Exception as e:
-                st.error(f"Error: {e}")
+            except Exception as e: st.error(f"Error: {e}")
