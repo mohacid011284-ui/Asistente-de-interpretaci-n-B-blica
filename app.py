@@ -17,7 +17,7 @@ except:
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
 
-# --- CEREBRO (PROMPT MODIFICADO PARA LEER TU GUIÓN EXACTO) ---
+# --- CEREBRO (PROMPT) ---
 INSTRUCCIONES_BASE = """
 ROL: Eres un Instructor de Seminario de Hermenéutica Expositiva.
 INSTRUCCIÓN SUPREMA: NO INVENTES CONTENIDO. Sigue estrictamente las secciones del archivo cargado.
@@ -45,13 +45,11 @@ def get_prompt():
     texto = INSTRUCCIONES_BASE
     texto += "\n\n=== CONTENIDO DE LA LECCIÓN ACTUAL ===\n"
     
-    # Aquí cargamos TODO el contenido ordenado para que la IA tenga el guion completo
     if os.path.exists("knowledge"):
         archivos_ordenados = sorted([f for f in os.listdir("knowledge") if f.endswith((".md", ".txt"))])
         for f in archivos_ordenados:
             try: 
                 with open(f"knowledge/{f}","r",encoding="utf-8") as x: 
-                    # Le damos el nombre del archivo para que sepa en qué "paso" va
                     texto += f"\n--- ARCHIVO: {f} ---\n{x.read()}\n"
             except: pass
     return texto
@@ -60,7 +58,7 @@ def get_prompt():
 if "chat" not in st.session_state or st.session_state.chat is None:
     st.session_state.chat = st.session_state.client.chats.create(
         model="gemini-2.5-flash",
-        config=types.GenerateContentConfig(system_instruction=get_prompt(), temperature=0.2) # Temp baja para que sea obediente
+        config=types.GenerateContentConfig(system_instruction=get_prompt(), temperature=0.2)
     )
 
 if "messages" not in st.session_state: st.session_state.messages = []
@@ -84,7 +82,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.button("🗑️ Reiniciar Chat", type="primary", on_click=reiniciar)
-    # ¡HEMOS ELIMINADO LA LISTA DE ARCHIVOS VISIBLE! 🕵️‍♂️
 
 # --- BOTONES ---
 c1,c2,c3,c4 = st.columns(4)
@@ -98,15 +95,22 @@ with c3:
 with c4: 
     st.button("🔍 Revisión", on_click=enviar_mensaje, args=("MODO REVISIÓN: Evalúa mi respuesta usando [CRITERIO_EVALUACION].",))
 
-# --- CHAT LOOP ---
+# --- MOSTRAR CHAT (CON FILTRO DE INVISIBILIDAD) ---
 for m in st.session_state.messages:
+    # 🕵️‍♂️ TRUCO DE MAGIA: Si el mensaje empieza con "MODO ", NO lo mostramos en pantalla
+    # pero la IA sí lo recuerda en su memoria.
+    if m["role"] == "user" and m["content"].startswith("MODO "):
+        continue 
+    
     r = "assistant" if m["role"]=="model" else "user"
     with st.chat_message(r): st.markdown(m["content"])
 
-if prompt := st.chat_input("Respuesta..."):
+# --- INPUT ---
+if prompt := st.chat_input("Escribe tu respuesta..."):
     st.session_state.messages.append({"role":"user","content":prompt})
     st.rerun()
 
+# --- RESPUESTA ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     with st.chat_message("assistant"):
         with st.spinner("..."):
