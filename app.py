@@ -1,4 +1,5 @@
 import os
+import re
 import hmac
 import streamlit as st
 from google import genai
@@ -17,6 +18,18 @@ try:
 except Exception:
     st.error("⚠️ Falta GOOGLE_API_KEY en secrets.")
     st.stop()
+
+# --- HELPERS DE BLOQUEO ---
+def is_maestro_request(text: str) -> bool:
+    if not text:
+        return False
+    return re.search(r"\bmodo\s*maestro\b", text, flags=re.IGNORECASE) is not None
+
+def is_revision_request(text: str) -> bool:
+    if not text:
+        return False
+    # permite "revisión" y "revision"
+    return re.search(r"\bmodo\s*revisi[oó]n\b", text, flags=re.IGNORECASE) is not None
 
 # --- ESTADO BASE ---
 if "client" not in st.session_state:
@@ -145,7 +158,7 @@ def activar_alumno():
     )
 
 def activar_maestro():
-    # BLOQUEO REAL: no mandar nada al modelo si no está desbloqueado
+    # bloqueo real: NO llamar al modelo si no está desbloqueado
     if not st.session_state.maestro_unlocked:
         st.session_state.messages.append({
             "role": "model",
@@ -159,10 +172,8 @@ def activar_maestro():
 
 def activar_revision():
     st.session_state.modo = "REVISION"
-    st.session_state.attach_file_next = True  # adjuntar SOLO en este envío
-    push_internal_command(
-        "MODO REVISIÓN: Evalúa mi respuesta usando [CRITERIO_EVALUACION]."
-    )
+    st.session_state.attach_file_next = True
+    push_internal_command("MODO REVISIÓN: Evalúa mi respuesta usando [CRITERIO_EVALUACION].")
 
 # --- INTERFAZ ---
 st.title("📖 Instructor de Interpretación Bíblica")
@@ -231,45 +242,62 @@ for m in st.session_state.messages:
     with st.chat_message(role):
         st.markdown(m["content"])
 
-# --- INPUT LIBRE ---
+# --- INPUT LIBRE (anti-atajos) ---
 if prompt := st.chat_input("Escribe tu respuesta..."):
+
+    # Si intentan activar Maestro por texto sin contraseña
+    if is_maestro_request(prompt) and not st.session_state.maestro_unlocked:
+        st.session_state.messages.append({
+            "role": "model",
+            "content": "🔒 Modo Maestro bloqueado. Debes desbloquearlo con contraseña en el panel lateral."
+        })
+        st.rerun()
+
+    # Si intentan activar Revisión por texto sin archivo
+    if is_revision_request(prompt) and st.session_state.submission is None:
+        st.session_state.messages.append({
+            "role": "model",
+            "content": "🔒 Para usar Revisión debes subir una entrega primero."
+        })
+        st.rerun()
+
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.rerun()
 
-# --- RESPUESTA DEL MODELO ---
+# --- RESPUESTA DEL MODELO (anti-atajos adicional) ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
     last_text = st.session_state.messages[-1]["content"]
 
-    # BLOQUEO SERVIDOR (anti-atajo): si alguien escribe "MODO MAESTRO" manualmente
-    if last_text.startswith("MODO MAESTRO") and not st.session_state.maestro_unlocked:
-        st.session_state.messages.pop()  # elimina el comando no autorizado
+    # doble candado: por si el texto ya quedó en messages
+    if is_maestro_request(last_text) and not st.session_state.maestro_unlocked:
+        st.session_state.messages.pop()
         with st.chat_message("assistant"):
             st.markdown("🔒 Modo Maestro bloqueado. Requiere contraseña.")
         st.session_state.messages.append({"role": "model", "content": "🔒 Modo Maestro bloqueado. Requiere contraseña."})
+        st.stop()
 
-    # BLOQUEO SERVIDOR (anti-atajo) para revisión sin archivo
-    elif last_text.startswith("MODO REVISIÓN") and st.session_state.submission is None:
+    if is_revision_request(last_text) and st.session_state.submission is None:
         st.session_state.messages.pop()
         with st.chat_message("assistant"):
             st.markdown("🔒 Para usar Revisión debes subir una entrega primero.")
         st.session_state.messages.append({"role": "model", "content": "🔒 Para usar Revisión debes subir una entrega primero."})
+        st.stop()
 
-    else:
-        with st.chat_message("assistant"):
-            with st.spinner("..."):
-                try:
-                    msg_content = [last_text]
+    with st.chat_message("assistant"):
+        with st.spinner("..."):
+            try:
+                msg_content = [last_text]
 
-                    # Adjuntar entrega SOLO cuando el modo lo requiera (Revisión)
-                    if st.session_state.attach_file_next and st.session_state.submission is not None:
-                        f = st.session_state.submission
-                        msg_content.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+                # Adjuntar entrega SOLO cuando el modo lo requiera (Revisión)
+                if st.session_state.attach_file_next and st.session_state.submission is not None:
+                    f = st.session_state.submission
+                    msg_content.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
 
-                    res = st.session_state.chat.send_message(msg_content)
-                    st.markdown(res.text)
-                    st.session_state.messages.append({"role": "model", "content": res.text})
+                res = st.session_state.chat.send_message(msg_content)
+                st.markdown(res.text)
+                st.session_state.messages.append({"role": "model", "content": res.text})
 
-                except Exception as e:
-                    st.error(f"Error: {e}")
-                finally:
-                    st.session_state.attach_file_next = False
+            except Exception as e:
+                st.error(f"Error: {e}")
+            finally:
+                st.session_state.attach_file_next = False
