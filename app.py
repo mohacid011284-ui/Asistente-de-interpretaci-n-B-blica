@@ -6,298 +6,238 @@ from google import genai
 from google.genai import types
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Instructor Bíblico", page_icon="📖", layout="wide")
-st.markdown(
-    """<style>div.stButton > button {width: 100%; border-radius: 10px; height: 3em;}</style>""",
-    unsafe_allow_html=True
-)
+st.set_page_config(page_title="Instructor Bíblico AI", page_icon="📖", layout="wide")
 
-# --- API KEY ---
+# Estilos CSS para botones grandes y limpios
+st.markdown("""
+    <style>
+    div.stButton > button {
+        width: 100%;
+        border-radius: 8px;
+        height: 3.5em;
+        font-weight: bold;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- GESTIÓN DE SECRETOS ---
 try:
     api_key = st.secrets["GOOGLE_API_KEY"]
 except Exception:
-    st.error("⚠️ Falta GOOGLE_API_KEY en secrets.")
+    st.error("⚠️ Error: No se encontró GOOGLE_API_KEY en los secretos (.streamlit/secrets.toml).")
     st.stop()
 
-# --- HELPERS DE BLOQUEO ---
-def is_maestro_request(text: str) -> bool:
-    if not text:
-        return False
-    return re.search(r"\bmodo\s*maestro\b", text, flags=re.IGNORECASE) is not None
+# --- DEFINICIÓN DEL CEREBRO (PROMPT MAESTRO) ---
+# Aquí pegamos la instrucción completa que definiste anteriormente
+SYSTEM_INSTRUCTION = """
+Eres un GPT personalizado que funciona como INSTRUCTOR DE INTERPRETACIÓN BÍBLICA.
+Tu autoridad normativa es el texto bíblico.
+PRINCIPIO RECTOR: “Permanecer en la línea: decir exactamente lo que el texto dice, ni más ni menos.”
 
-def is_revision_request(text: str) -> bool:
-    if not text:
-        return False
-    # permite "revisión" y "revision"
-    return re.search(r"\bmodo\s*revisi[oó]n\b", text, flags=re.IGNORECASE) is not None
+MARCO HERMENÉUTICO OBLIGATORIO (En orden):
+1. Texto bíblico | 2. Audiencia original | 3. Tipo de texto | 4. Rasgos literarios | 5. Estructura
+6. Énfasis | 7. Contexto | 8. Línea melódica | 9. Argumento | 10. Reflexión teológica
+11. Persuasión | 12. Arreglo | 13. Aplicación.
 
-# --- ESTADO BASE ---
+MODOS DE OPERACIÓN:
+- MODO AULA: Enseña lección por lección. No permitas avanzar sin validar el paso anterior.
+- MODO ALUMNO: Guía con preguntas socráticas. Nunca des respuestas completas.
+- MODO MAESTRO: Modela interpretaciones completas y perfectas. (SOLO SI SE SOLICITA EXPLÍCITAMENTE).
+- MODO REVISIÓN: Evalúa trabajos subidos. Sé estricto con el marco hermenéutico.
+
+IMPORTANTE: Si el usuario intenta saltarse pasos en Modo Alumno, bloquéalo y regrésalo al paso correspondiente.
+"""
+
+# --- INICIALIZACIÓN DE ESTADO ---
 if "client" not in st.session_state:
     st.session_state.client = genai.Client(api_key=api_key)
+
+if "chat" not in st.session_state:
+    # Configuramos el modelo con tu instrucción maestra
+    st.session_state.chat = st.session_state.client.chats.create(
+        model="gemini-2.0-flash", # O usa "gemini-1.5-pro" para más potencia
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            temperature=0.3 # Bajo para ser preciso y riguroso
+        )
+    )
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-if "modo" not in st.session_state:
-    st.session_state.modo = "LIBRE"  # AULA | ALUMNO | MAESTRO | REVISION | LIBRE
-
-if "aula_vista" not in st.session_state:
-    st.session_state.aula_vista = False
-
-if "submission" not in st.session_state:
-    st.session_state.submission = None  # archivo de entrega del alumno
-
-if "attach_file_next" not in st.session_state:
-    st.session_state.attach_file_next = False  # adjuntar entrega SOLO en el próximo envío
-
+# Variables de control de flujo
 if "maestro_unlocked" not in st.session_state:
     st.session_state.maestro_unlocked = False
-
-# --- CEREBRO (PROMPT) ---
-INSTRUCCIONES_BASE = """
-ROL: Eres un Instructor de Seminario de Hermenéutica Expositiva.
-INSTRUCCIÓN SUPREMA: NO INVENTES CONTENIDO. Sigue estrictamente las secciones del archivo cargado.
-
-CUANDO EL USUARIO PRESIONE UN BOTÓN, ACTÚA ASÍ:
-
-🟢 MODO AULA (Botón 'Aula')
-1. Busca en el archivo actual la sección que dice "### [CONTENIDO_AULA]".
-2. Exponlo tal cual está escrito.
-3. Al final, haz ÚNICAMENTE la pregunta que aparece en "### [PREGUNTA_AULA]".
-
-🟡 MODO ALUMNO (Botón 'Alumno' - Socrático)
-1. Busca la sección "### [GUIA_SOCRATICA]".
-2. Usa esas preguntas específicas para guiar al alumno. No le des la respuesta.
-
-🔴 MODO REVISIÓN (Botón 'Revisión')
-1. Busca la sección "### [CRITERIO_EVALUACION]".
-2. Usa esos puntos para calificar lo que el alumno escribió.
-
-🔵 MODO MAESTRO (Botón 'Maestro')
-1. Modela la respuesta correcta basándote en la teoría.
-"""
-
-def get_prompt() -> str:
-    texto = INSTRUCCIONES_BASE
-    texto += "\n\n=== CONTENIDO DE LA LECCIÓN ACTUAL ===\n"
-
-    if os.path.exists("knowledge"):
-        archivos_ordenados = sorted(
-            [f for f in os.listdir("knowledge") if f.endswith((".md", ".txt"))]
-        )
-        for f in archivos_ordenados:
-            try:
-                with open(f"knowledge/{f}", "r", encoding="utf-8") as x:
-                    texto += f"\n--- ARCHIVO: {f} ---\n{x.read()}\n"
-            except Exception:
-                pass
-
-    return texto
-
-# --- CHAT (se crea si no existe) ---
-if "chat" not in st.session_state or st.session_state.chat is None:
-    st.session_state.chat = st.session_state.client.chats.create(
-        model="gemini-2.5-flash",
-        config=types.GenerateContentConfig(
-            system_instruction=get_prompt(),
-            temperature=0.2
-        )
-    )
-
-# --- UTILIDADES ---
-def push_internal_command(texto: str):
-    st.session_state.messages.append({"role": "user", "content": texto})
-
-def reiniciar():
-    st.session_state.chat = None
-    st.session_state.messages = []
-    st.session_state.modo = "LIBRE"
-    st.session_state.aula_vista = False
+if "submission" not in st.session_state:
     st.session_state.submission = None
+if "attach_file_next" not in st.session_state:
     st.session_state.attach_file_next = False
-    st.session_state.maestro_unlocked = False
-    if "uploader" in st.session_state:
-        del st.session_state["uploader"]
-    if "maestro_pass_input" in st.session_state:
-        del st.session_state["maestro_pass_input"]
+if "aula_iniciada" not in st.session_state:
+    st.session_state.aula_iniciada = False
 
-def desbloquear_maestro():
-    if "MAESTRO_PASSWORD" not in st.secrets:
-        st.session_state.maestro_unlocked = False
-        st.error("⚠️ Falta MAESTRO_PASSWORD en secrets.")
-        return
+# --- FUNCIONES DE SEGURIDAD Y LÓGICA ---
 
-    expected = st.secrets["MAESTRO_PASSWORD"]
-    entered = st.session_state.get("maestro_pass_input", "")
-
-    if hmac.compare_digest(entered, expected):
+def verificar_password():
+    """Verifica la contraseña del modo maestro de forma segura"""
+    clave_real = st.secrets.get("MAESTRO_PASSWORD", "12345")
+    input_usuario = st.session_state.get("pass_input", "")
+    
+    if hmac.compare_digest(input_usuario, clave_real):
         st.session_state.maestro_unlocked = True
-        st.success("✅ Acceso Maestro habilitado")
+        st.success("✅ Modo Maestro Desbloqueado")
     else:
-        st.session_state.maestro_unlocked = False
         st.error("❌ Contraseña incorrecta")
 
 def bloquear_maestro():
     st.session_state.maestro_unlocked = False
-    st.info("🔒 Acceso Maestro bloqueado")
+    st.info("🔒 Modo Maestro Bloqueado")
 
-# --- ACCIONES DE BOTONES ---
-def activar_aula():
-    st.session_state.modo = "AULA"
-    st.session_state.aula_vista = True
-    st.session_state.attach_file_next = False
-    push_internal_command(
-        "MODO AULA: Expón la lección actual siguiendo el guion de [CONTENIDO_AULA] y termina con [PREGUNTA_AULA]."
+def reiniciar_chat():
+    st.session_state.messages = []
+    st.session_state.chat = st.session_state.client.chats.create(
+        model="gemini-2.0-flash",
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
     )
-
-def activar_alumno():
-    st.session_state.modo = "ALUMNO"
+    st.session_state.aula_iniciada = False
     st.session_state.attach_file_next = False
-    push_internal_command(
-        "MODO ALUMNO: Inicia el diálogo socrático usando la [GUIA_SOCRATICA]."
-    )
 
-def activar_maestro():
-    # bloqueo real: NO llamar al modelo si no está desbloqueado
-    if not st.session_state.maestro_unlocked:
-        st.session_state.messages.append({
-            "role": "model",
-            "content": "🔒 Modo Maestro bloqueado. Ingresa la contraseña en el panel lateral."
-        })
-        return
+# Detección de intentos de hackeo vía texto (Regex)
+def es_intento_no_autorizado(texto):
+    texto = texto.lower()
+    patron_maestro = r"(modo maestro|actúa como maestro|dame la respuesta|resuelve tú)"
+    
+    # 1. Si intenta ser maestro y está bloqueado
+    if re.search(patron_maestro, texto) and not st.session_state.maestro_unlocked:
+        return "LOCK_MAESTRO"
+    
+    return "OK"
 
-    st.session_state.modo = "MAESTRO"
-    st.session_state.attach_file_next = False
-    push_internal_command("MODO MAESTRO: Muestra cómo se hace.")
+# --- FUNCIONES DE BOTONES (COMMAND INJECTION) ---
+def trigger_aula():
+    msg = "COMANDO INTERNO: Inicia el MODO AULA. Comienza con el paso 1 (Audiencia Original) para el pasaje que elija el usuario."
+    st.session_state.messages.append({"role": "user", "content": msg, "hidden": True})
+    st.session_state.aula_iniciada = True
+    enviar_a_gemini(msg, ocultar_usuario=True)
 
-def activar_revision():
-    st.session_state.modo = "REVISION"
+def trigger_alumno():
+    msg = "COMANDO INTERNO: Cambia a MODO ALUMNO. Hazme una pregunta socrática sobre el paso actual."
+    st.session_state.messages.append({"role": "user", "content": msg, "hidden": True})
+    enviar_a_gemini(msg, ocultar_usuario=True)
+
+def trigger_maestro():
+    msg = "COMANDO INTERNO: Cambia a MODO MAESTRO. Muestra cómo se resuelve el paso actual perfectamente."
+    st.session_state.messages.append({"role": "user", "content": msg, "hidden": True})
+    enviar_a_gemini(msg, ocultar_usuario=True)
+
+def trigger_revision():
     st.session_state.attach_file_next = True
-    push_internal_command("MODO REVISIÓN: Evalúa mi respuesta usando [CRITERIO_EVALUACION].")
+    msg = "COMANDO INTERNO: Cambia a MODO REVISIÓN. He adjuntado mi tarea. Evalúala estrictamente."
+    st.session_state.messages.append({"role": "user", "content": msg, "hidden": True})
+    enviar_a_gemini(msg, ocultar_usuario=True)
 
-# --- INTERFAZ ---
-st.title("📖 Instructor de Interpretación Bíblica")
+# --- MOTOR DE COMUNICACIÓN ---
+def enviar_a_gemini(texto, ocultar_usuario=False):
+    try:
+        contenido_envio = [texto]
+        
+        # Si hay archivo pendiente (Solo para modo revisión)
+        if st.session_state.attach_file_next and st.session_state.submission:
+            archivo = st.session_state.submission
+            # Convertimos bytes para Gemini
+            datos_archivo = types.Part.from_bytes(data=archivo.getvalue(), mime_type=archivo.type)
+            contenido_envio.append(datos_archivo)
+            st.session_state.attach_file_next = False # Ya lo enviamos, apagamos flag
+        
+        # Llamada a la API
+        response = st.session_state.chat.send_message(contenido_envio)
+        
+        # Guardar historial (Filtrando lo oculto)
+        if not ocultar_usuario:
+             # Ya se agregó arriba en el flujo normal, esto es redundancia por si acaso
+             pass
+             
+        st.session_state.messages.append({"role": "model", "content": response.text})
+        
+    except Exception as e:
+        st.error(f"Error de conexión: {e}")
 
+# --- INTERFAZ GRÁFICA ---
+
+# BARRA LATERAL
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3389/3389081.png", width=100)
-    st.title("Panel de Control")
-
-    archivo = st.file_uploader(
-        "📂 Subir entrega (sermón/trabajo)",
-        type=["pdf", "txt", "md"],
-        key="uploader"
-    )
-
-    if archivo is not None:
-        st.session_state.submission = archivo
-        st.success(f"✅ Archivo recibido: {archivo.name}")
+    st.image("https://cfmpaideia.com/wp-content/uploads/2023/05/logo-paideia-blanco.png", width=200)
+    st.header("Panel de Control")
+    
+    # Uploader
+    uploaded_file = st.file_uploader("📂 Subir Tarea (PDF/TXT)", type=['pdf', 'txt', 'md'])
+    if uploaded_file:
+        st.session_state.submission = uploaded_file
+        st.success("Archivo cargado y listo para revisión.")
+    
+    st.markdown("---")
+    
+    # Seguridad Maestro
+    st.subheader("🔐 Acceso Maestro")
+    if not st.session_state.maestro_unlocked:
+        st.text_input("Contraseña", type="password", key="pass_input")
+        st.button("Desbloquear", on_click=verificar_password)
     else:
-        if st.session_state.submission is not None:
-            st.info(f"📌 Archivo actual: {st.session_state.submission.name}")
-        else:
-            st.warning("Sin entrega cargada.")
-
+        st.success("Modo Maestro: ACTIVO")
+        st.button("Bloquear de nuevo", on_click=bloquear_maestro)
+        
     st.markdown("---")
-    st.subheader("Acceso Maestro")
-    st.text_input("Contraseña", type="password", key="maestro_pass_input")
-    ca, cb = st.columns(2)
-    with ca:
-        st.button("Desbloquear", on_click=desbloquear_maestro)
-    with cb:
-        st.button("Bloquear", on_click=bloquear_maestro)
-    st.caption(f"Estado: {'✅ Habilitado' if st.session_state.maestro_unlocked else '🔒 Bloqueado'}")
+    st.button("🗑️ Reiniciar Clase", on_click=reiniciar_chat)
 
-    st.markdown("---")
-    st.button("🗑️ Reiniciar Chat", type="primary", on_click=reiniciar)
+# TÍTULO Y BOTONES DE MODO
+st.title("Aula de Hermenéutica Expositiva")
 
-# --- BOTONES PRINCIPALES ---
-c1, c2, c3, c4 = st.columns(4)
+col1, col2, col3, col4 = st.columns(4)
 
-with c1:
-    st.button("🎓 Aula", on_click=activar_aula)
+with col1:
+    st.button("🏫 MODO AULA", on_click=trigger_aula, help="Iniciar la clase paso a paso")
+    
+with col2:
+    # Solo activo si la clase empezó
+    st.button("🤔 MODO ALUMNO", on_click=trigger_alumno, disabled=not st.session_state.aula_iniciada, help="Ayuda socrática")
 
-with c2:
-    st.button("📝 Alumno", on_click=activar_alumno, disabled=not st.session_state.aula_vista)
+with col3:
+    # Solo activo si está desbloqueado
+    st.button("👨‍🏫 MODO MAESTRO", on_click=trigger_maestro, disabled=not st.session_state.maestro_unlocked, type="primary" if st.session_state.maestro_unlocked else "secondary")
 
-with c3:
-    st.button(
-        "🧑‍🏫 Maestro",
-        on_click=activar_maestro,
-        disabled=(not st.session_state.aula_vista or not st.session_state.maestro_unlocked)
-    )
+with col4:
+    # Solo activo si hay archivo
+    st.button("📝 MODO REVISIÓN", on_click=trigger_revision, disabled=uploaded_file is None)
 
-with c4:
-    st.button(
-        "🔍 Revisión",
-        on_click=activar_revision,
-        disabled=(not st.session_state.aula_vista or st.session_state.submission is None)
-    )
+# ÁREA DE CHAT
+st.markdown("---")
 
-# --- MOSTRAR CHAT (oculta comandos internos "MODO ...") ---
-for m in st.session_state.messages:
-    if m["role"] == "user" and m["content"].startswith("MODO "):
+for message in st.session_state.messages:
+    # No mostramos los comandos internos ocultos
+    if message.get("hidden"):
         continue
+        
+    role = message["role"]
+    avatar = "🧑‍💻" if role == "user" else "📖"
+    bg_color = "#f0f2f6" if role == "model" else "#ffffff"
+    
+    with st.chat_message(role, avatar=avatar):
+        st.markdown(message["content"])
 
-    role = "assistant" if m["role"] == "model" else "user"
-    with st.chat_message(role):
-        st.markdown(m["content"])
-
-# --- INPUT LIBRE (anti-atajos) ---
-if prompt := st.chat_input("Escribe tu respuesta..."):
-
-    # Si intentan activar Maestro por texto sin contraseña
-    if is_maestro_request(prompt) and not st.session_state.maestro_unlocked:
-        st.session_state.messages.append({
-            "role": "model",
-            "content": "🔒 Modo Maestro bloqueado. Debes desbloquearlo con contraseña en el panel lateral."
-        })
-        st.rerun()
-
-    # Si intentan activar Revisión por texto sin archivo
-    if is_revision_request(prompt) and st.session_state.submission is None:
-        st.session_state.messages.append({
-            "role": "model",
-            "content": "🔒 Para usar Revisión debes subir una entrega primero."
-        })
-        st.rerun()
-
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.rerun()
-
-# --- RESPUESTA DEL MODELO (anti-atajos adicional) ---
-if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    last_text = st.session_state.messages[-1]["content"]
-
-    # doble candado: por si el texto ya quedó en messages
-    if is_maestro_request(last_text) and not st.session_state.maestro_unlocked:
-        st.session_state.messages.pop()
-        with st.chat_message("assistant"):
-            st.markdown("🔒 Modo Maestro bloqueado. Requiere contraseña.")
-        st.session_state.messages.append({"role": "model", "content": "🔒 Modo Maestro bloqueado. Requiere contraseña."})
-        st.stop()
-
-    if is_revision_request(last_text) and st.session_state.submission is None:
-        st.session_state.messages.pop()
-        with st.chat_message("assistant"):
-            st.markdown("🔒 Para usar Revisión debes subir una entrega primero.")
-        st.session_state.messages.append({"role": "model", "content": "🔒 Para usar Revisión debes subir una entrega primero."})
-        st.stop()
-
-    with st.chat_message("assistant"):
-        with st.spinner("..."):
-            try:
-                msg_content = [last_text]
-
-                # Adjuntar entrega SOLO cuando el modo lo requiera (Revisión)
-                if st.session_state.attach_file_next and st.session_state.submission is not None:
-                    f = st.session_state.submission
-                    msg_content.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
-
-                res = st.session_state.chat.send_message(msg_content)
-                st.markdown(res.text)
-                st.session_state.messages.append({"role": "model", "content": res.text})
-
-            except Exception as e:
-                st.error(f"Error: {e}")
-            finally:
-                st.session_state.attach_file_next = False
+# INPUT DE USUARIO
+if prompt := st.chat_input("Escribe tu análisis o pregunta..."):
+    
+    # 1. Verificación de Seguridad (Anti-Cheat)
+    check_seguridad = es_intento_no_autorizado(prompt)
+    
+    if check_seguridad == "LOCK_MAESTRO":
+        st.error("⛔ ACCESO DENEGADO: No puedes activar funciones de Maestro sin contraseña. Usa el panel lateral.")
+        # No guardamos ni enviamos el mensaje
+    else:
+        # 2. Flujo Normal
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user", avatar="🧑‍💻"):
+            st.markdown(prompt)
+        
+        with st.spinner("El instructor está analizando..."):
+            enviar_a_gemini(prompt)
+            st.rerun()
