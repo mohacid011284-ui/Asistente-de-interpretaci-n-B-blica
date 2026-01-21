@@ -109,13 +109,14 @@ def reiniciar():
         del st.session_state["maestro_pass_input"]
 
 def desbloquear_maestro():
-    try:
-        expected = st.secrets["MAESTRO_PASSWORD"]
-    except Exception:
+    if "MAESTRO_PASSWORD" not in st.secrets:
+        st.session_state.maestro_unlocked = False
         st.error("⚠️ Falta MAESTRO_PASSWORD en secrets.")
         return
 
+    expected = st.secrets["MAESTRO_PASSWORD"]
     entered = st.session_state.get("maestro_pass_input", "")
+
     if hmac.compare_digest(entered, expected):
         st.session_state.maestro_unlocked = True
         st.success("✅ Acceso Maestro habilitado")
@@ -144,9 +145,14 @@ def activar_alumno():
     )
 
 def activar_maestro():
+    # BLOQUEO REAL: no mandar nada al modelo si no está desbloqueado
     if not st.session_state.maestro_unlocked:
-        push_internal_command("Acceso denegado: el modo Maestro requiere contraseña.")
+        st.session_state.messages.append({
+            "role": "model",
+            "content": "🔒 Modo Maestro bloqueado. Ingresa la contraseña en el panel lateral."
+        })
         return
+
     st.session_state.modo = "MAESTRO"
     st.session_state.attach_file_next = False
     push_internal_command("MODO MAESTRO: Muestra cómo se hace.")
@@ -232,22 +238,38 @@ if prompt := st.chat_input("Escribe tu respuesta..."):
 
 # --- RESPUESTA DEL MODELO ---
 if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
-    with st.chat_message("assistant"):
-        with st.spinner("..."):
-            try:
-                msg_content = [st.session_state.messages[-1]["content"]]
+    last_text = st.session_state.messages[-1]["content"]
 
-                # Adjuntar entrega SOLO cuando el modo lo requiera (Revisión)
-                if st.session_state.attach_file_next and st.session_state.submission is not None:
-                    f = st.session_state.submission
-                    msg_content.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+    # BLOQUEO SERVIDOR (anti-atajo): si alguien escribe "MODO MAESTRO" manualmente
+    if last_text.startswith("MODO MAESTRO") and not st.session_state.maestro_unlocked:
+        st.session_state.messages.pop()  # elimina el comando no autorizado
+        with st.chat_message("assistant"):
+            st.markdown("🔒 Modo Maestro bloqueado. Requiere contraseña.")
+        st.session_state.messages.append({"role": "model", "content": "🔒 Modo Maestro bloqueado. Requiere contraseña."})
 
-                res = st.session_state.chat.send_message(msg_content)
-                st.markdown(res.text)
-                st.session_state.messages.append({"role": "model", "content": res.text})
+    # BLOQUEO SERVIDOR (anti-atajo) para revisión sin archivo
+    elif last_text.startswith("MODO REVISIÓN") and st.session_state.submission is None:
+        st.session_state.messages.pop()
+        with st.chat_message("assistant"):
+            st.markdown("🔒 Para usar Revisión debes subir una entrega primero.")
+        st.session_state.messages.append({"role": "model", "content": "🔒 Para usar Revisión debes subir una entrega primero."})
 
-            except Exception as e:
-                st.error(f"Error: {e}")
-            finally:
-                # evita adjuntar el archivo en mensajes posteriores por accidente
-                st.session_state.attach_file_next = False
+    else:
+        with st.chat_message("assistant"):
+            with st.spinner("..."):
+                try:
+                    msg_content = [last_text]
+
+                    # Adjuntar entrega SOLO cuando el modo lo requiera (Revisión)
+                    if st.session_state.attach_file_next and st.session_state.submission is not None:
+                        f = st.session_state.submission
+                        msg_content.append(types.Part.from_bytes(data=f.getvalue(), mime_type=f.type))
+
+                    res = st.session_state.chat.send_message(msg_content)
+                    st.markdown(res.text)
+                    st.session_state.messages.append({"role": "model", "content": res.text})
+
+                except Exception as e:
+                    st.error(f"Error: {e}")
+                finally:
+                    st.session_state.attach_file_next = False
